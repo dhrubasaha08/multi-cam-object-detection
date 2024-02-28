@@ -1,78 +1,102 @@
 from flask import Flask, render_template, Response
 import cv2
 import threading
+import numpy as np
+from tflite_support.task import vision
 
 app = Flask(__name__)
 
-# Global variable to hold the latest frame captured from the ESP32-CAM
+# Global variables to hold and lock the latest frame
 outputFrame = None
-# Lock to ensure thread-safe exchanges of the output frame
 lock = threading.Lock()
 
-# URL of the ESP32-CAM video stream
-ESP32_CAM_STREAM_URL = 'http://10.0.0.224:81/stream'
+# Path to your TFLite model file
+MODEL_PATH = 'efficientdet_lite0.tflite'
 
-def capture_stream():
-    """
-    Connects to the ESP32-CAM and captures the video stream.
-    The latest frame is stored in a global variable.
-    """
+# Initialize the object detector at the start of the application
+def initialize_detector():
+    base_options = vision.ObjectDetectorOptions(
+        file_name=MODEL_PATH, num_threads=4, score_threshold=0.3)
+    detector = vision.ObjectDetector.create_from_options(base_options)
+    return detector
+
+# Function to capture video stream and apply object detection
+def capture_stream(detector):
     global outputFrame, lock
 
-    # Create a VideoCapture object to read from the ESP32-CAM stream
-    cap = cv2.VideoCapture(ESP32_CAM_STREAM_URL)
-
+    # Establish connection to the ESP32-CAM video stream
+    cap = cv2.VideoCapture('http://10.0.0.224:81/stream')
     while True:
-        # Read the next frame from the stream
         ret, frame = cap.read()
         if not ret:
             continue
 
-        # Update the global outputFrame under lock protection
+        # Convert the captured frame to RGB
+        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Prepare the frame for model inference
+        input_tensor = vision.TensorImage.create_from_array(rgb_image)
+
+        # Perform object detection
+        detection_result = detector.detect(input_tensor)
+
+        # Annotate the frame with detection results
+        annotated_image = visualize(frame, detection_result)
+
+        # Update the global frame for streaming
         with lock:
-            outputFrame = frame.copy()
+            outputFrame = annotated_image.copy()
 
+# Visualize the detection results on the frame
+def visualize(image, detection_result):
+    for detection in detection_result.detections:
+        # Draw bounding boxes and labels on the image
+        bbox = detection.bounding_box
+        start_point = bbox.origin_x, bbox.origin_y
+        end_point = bbox.origin_x + bbox.width, bbox.origin_y + bbox.height
+        cv2.rectangle(image, start_point, end_point, (0, 0, 255), 3)
+
+        # Label and score
+        category = detection.categories[0]
+        category_name = category.category_name
+        score = round(category.score, 2)
+        label = f"{category_name} ({score})"
+        cv2.putText(image, label, (bbox.origin_x, bbox.origin_y - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+    return image
+
+# Route for serving the video feed
+@app.route('/video_feed')
+def video_feed():
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+# Generator function to stream the output frames
 def generate_frames():
-    """
-    Encodes the latest frame as JPEG and yields it as a byte stream,
-    following the multipart/x-mixed-replace content type which is necessary for streaming.
-    """
     global outputFrame, lock
-
     while True:
-        # Wait for the next frame available
         with lock:
             if outputFrame is None:
                 continue
-
-            # Encode the frame in JPEG format
-            success, encodedImage = cv2.imencode('.jpg', outputFrame)
-            if not success:
+            (flag, encodedImage) = cv2.imencode('.jpg', outputFrame)
+            if not flag:
                 continue
-
-        # Yield the frame data
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + bytearray(encodedImage) + b'\r\n')
 
+# Home page route
 @app.route('/')
 def index():
-    """
-    Renders the main page with the video stream embedded.
-    """
     return render_template('index.html')
 
-@app.route('/video_feed')
-def video_feed():
-    """
-    Route to serve the video feed.
-    """
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
 if __name__ == '__main__':
-    # Start a thread to capture the video stream
-    t = threading.Thread(target=capture_stream)
+    # Load the object detection model
+    detector = initialize_detector()
+
+    # Start the video stream capture on a separate thread
+    t = threading.Thread(target=capture_stream, args=(detector,))
     t.daemon = True
     t.start()
 
-    # Run the Flask app
+    # Start the Flask app
     app.run(host='0.0.0.0', port=5000, threaded=True)

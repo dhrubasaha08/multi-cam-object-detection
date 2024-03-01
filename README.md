@@ -77,3 +77,21 @@ Ensure the Raspberry Pi is connected to the internet and have terminal access. T
 ## License
 
 This project is distributed under the Apache License 2.0, which permits unrestricted use, distribution, and reproduction in any medium, provided the original work is properly cited.
+
+
+## Citation
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10730004.svg)](https://doi.org/10.5281/zenodo.10730004)
+
+To cite this in your projects, please use the following BibTeX entry, and refer to the Zenodo badge above for the most current DOI:
+
+```bibtex
+@software{dhruba_2024_10730004,
+  author       = {Dhruba, Saha},
+  title        = {Multi-Camera Object Detection System},
+  month        = mar,
+  year         = 2024,
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.10730004},
+  url          = {https://doi.org/10.5281/zenodo.10730004}
+}
+```
